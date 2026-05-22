@@ -71,15 +71,10 @@ async function checkAllSites() {
 
 // --- Seguimiento de tabs ---
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  if (changeInfo.status !== 'complete') return;
+// Debounce por tab: espera a que terminen todas las redirecciones antes de verificar
+const debounceTimers = {};
 
-  const checks = await getPending();
-  const entry = checks[String(tabId)];
-  if (!entry) return;
-
-  const { siteId, hadLoginPage } = entry;
-
+async function performCheck(tabId, siteId, hadLoginPage) {
   try {
     const response = await chrome.tabs.sendMessage(tabId, { action: 'getLoginState' });
 
@@ -98,7 +93,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
               password: credData.credentials.password,
             });
           } catch {}
-        }, 900);
+        }, 400);
       }
     } else {
       await updateSiteStatus(siteId, 'active');
@@ -115,6 +110,22 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     await updateSiteStatus(siteId, 'unknown');
     await removePending(tabId);
   }
+}
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return;
+
+  const checks = await getPending();
+  const entry = checks[String(tabId)];
+  if (!entry) return;
+
+  // Cada redirect dispara un 'complete'. Reseteamos el timer para esperar
+  // al último complete (la página final después de todas las redirecciones).
+  clearTimeout(debounceTimers[tabId]);
+  debounceTimers[tabId] = setTimeout(() => {
+    delete debounceTimers[tabId];
+    performCheck(tabId, entry.siteId, entry.hadLoginPage);
+  }, 2000);
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
