@@ -47,6 +47,7 @@ function findVisibleField(selectors) {
 
 function findUsernameField() {
   return findVisibleField([
+    'input[placeholder*="Scotia ID" i]', // PAM-specific field
     'input[type="email"]',
     'input[type="text"][name*="user" i]',
     'input[type="text"][name*="email" i]',
@@ -80,18 +81,15 @@ function findNextButton() {
 }
 
 function findSSOButton() {
-  // Check button/link text
+  const keywords = ['sso', 'bns', 'single sign-on', 'sign in with sso', 'sign in with bns'];
   const clickable = document.querySelectorAll('button, a, input[type="button"], input[type="submit"]');
   for (const el of clickable) {
     const text = (el.textContent || el.value || '').toLowerCase().trim();
-    if (text === 'sso' || text.includes(' sso') || text.startsWith('sso ') ||
-        text.includes('single sign-on') || text.includes('sign in with sso')) {
-      return el;
-    }
+    if (keywords.some(kw => text === kw || text.includes(kw))) return el;
   }
-  // Check by attribute
   return document.querySelector(
-    '[id*="sso" i]:is(button,a), [class*="sso" i]:is(button,a), [name*="sso" i]:is(button,a)'
+    '[id*="sso" i]:is(button,a), [class*="sso" i]:is(button,a), [name*="sso" i]:is(button,a),' +
+    '[id*="bns" i]:is(button,a), [class*="bns" i]:is(button,a)'
   );
 }
 
@@ -144,18 +142,22 @@ function fillUsernameAndNext(username) {
   else usernameField.form?.submit();
 }
 
-// --- PAM step 2: fill password and submit ---
-function fillPassword(password) {
+// --- PAM step 2: fill password + OTP together and submit ---
+// Authentication Method is left untouched (already has its default value).
+function fillPasswordAndOTP(password, otp) {
   const passwordField = document.querySelector('input[type="password"]');
-  if (!passwordField) return;
-  setNativeValue(passwordField, password);
-  passwordField.focus();
+  const otpField = findOTPField();
+
+  if (passwordField) { setNativeValue(passwordField, password); passwordField.focus(); }
+  if (otpField)      { setNativeValue(otpField, otp); }
+
+  if (!passwordField && !otpField) return;
   const btn = findSubmitButton();
   if (btn) btn.click();
-  else passwordField.form?.submit();
+  else (passwordField?.form || otpField?.form)?.submit();
 }
 
-// --- PAM step 3: fill OTP and submit ---
+// --- Standalone OTP fill (fallback) ---
 function fillOTP(otp) {
   const otpField = findOTPField();
   if (!otpField) return;
@@ -179,8 +181,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       fillUsernameAndNext(message.username);
       sendResponse({ ok: true });
       break;
-    case 'fillPassword':
-      fillPassword(message.password);
+    case 'fillPasswordAndOTP':
+      fillPasswordAndOTP(message.password, message.otp);
       sendResponse({ ok: true });
       break;
     case 'fillOTP':

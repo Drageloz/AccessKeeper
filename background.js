@@ -104,25 +104,16 @@ async function performCheck(tabId, entry) {
     }
 
     if (step === 'pam_otp') {
-      // Request OTP from the user via popup
+      // Page 2: Password + Authentication Method (default) + OTP are all visible.
+      // Request OTP from the user — password and OTP will be submitted together.
       await updateSiteStatus(siteId, 'otp');
       await chrome.storage.local.set({ pendingOTP: { tabId, siteId } });
       return;
     }
 
-    if (step === 'pam_password') {
-      // Step 2: fill password and submit
-      await setPending(tabId, siteId, true, 'pam_otp');
-      setTimeout(async () => {
-        try {
-          await chrome.tabs.sendMessage(tabId, { action: 'fillPassword', password: creds.password });
-        } catch {}
-      }, 400);
-      return;
-    }
-
-    // Step 1 (initial / sso_attempted): fill username and click Next
-    await setPending(tabId, siteId, true, 'pam_password');
+    // Step 1: fill Scotia ID (username) and click Next.
+    // Page 2 will show Password + Auth Method + OTP fields together.
+    await setPending(tabId, siteId, true, 'pam_otp');
     setTimeout(async () => {
       try {
         await chrome.tabs.sendMessage(tabId, { action: 'fillUsernameAndNext', username: creds.username });
@@ -204,9 +195,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const { tabId, siteId, otp } = message;
       await chrome.storage.local.remove('pendingOTP');
       await setPending(Number(tabId), siteId, true, 'pam_otp_submitted');
+      const credData = await chrome.storage.session.get('credentials');
       setTimeout(async () => {
         try {
-          await chrome.tabs.sendMessage(Number(tabId), { action: 'fillOTP', otp });
+          await chrome.tabs.sendMessage(Number(tabId), {
+            action: 'fillPasswordAndOTP',
+            password: credData.credentials?.password,
+            otp,
+          });
         } catch {}
       }, 300);
     } else if (message.action === 'cancelOTP') {
