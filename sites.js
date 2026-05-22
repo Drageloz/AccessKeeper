@@ -1,7 +1,7 @@
 // Editar este archivo para agregar o quitar sitios del equipo.
 // Cada sitio necesita un id único, nombre, url y descripción.
 
-export const SITES = [
+const SITES = [
   {
     id: 'portal_dev',
     name: 'Developer Portal',

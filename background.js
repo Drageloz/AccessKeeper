@@ -1,4 +1,4 @@
-import { SITES } from './sites.js';
+importScripts('./sites.js');
 
 // --- Pending checks (chrome.storage.session sobrevive reinicios del SW) ---
 // Estructura: { "tabId": { siteId: string, hadLoginPage: boolean } }

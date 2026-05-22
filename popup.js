@@ -1,5 +1,3 @@
-import { SITES } from './sites.js';
-
 const STATUS_CONFIG = {
   active:   { label: 'Activo',       cssClass: 'status-active',   cardClass: 'card-active' },
   expired:  { label: 'Expirado',     cssClass: 'status-expired',  cardClass: 'card-expired' },
