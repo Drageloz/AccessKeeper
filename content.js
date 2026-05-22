@@ -131,13 +131,28 @@ function fillCredentials(username, password) {
   else (passwordField?.form || usernameField?.form)?.submit();
 }
 
-// --- PAM step 1: fill username and click Next ---
-function fillUsernameAndNext(username) {
+// Polls until the given button finder returns an enabled, visible button (or timeout)
+function waitForEnabledButton(finderFn, timeoutMs = 10000) {
+  return new Promise(resolve => {
+    const deadline = Date.now() + timeoutMs;
+    const check = () => {
+      const btn = finderFn();
+      if (btn && !btn.disabled && btn.offsetParent !== null) return resolve(btn);
+      if (Date.now() >= deadline) return resolve(btn || null);
+      setTimeout(check, 400);
+    };
+    check();
+  });
+}
+
+// --- PAM step 1: fill Scotia ID (username) and click Next ---
+// Next button may take a few seconds to become enabled after page load.
+async function fillUsernameAndNext(username) {
   const usernameField = findUsernameField();
   if (!usernameField) return;
   usernameField.focus();
   setNativeValue(usernameField, username);
-  const btn = findNextButton();
+  const btn = await waitForEnabledButton(findNextButton, 10000);
   if (btn) btn.click();
   else usernameField.form?.submit();
 }
@@ -178,7 +193,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok: true });
       break;
     case 'fillUsernameAndNext':
-      fillUsernameAndNext(message.username);
+      fillUsernameAndNext(message.username); // async — respond immediately, polling runs in background
       sendResponse({ ok: true });
       break;
     case 'fillPasswordAndOTP':

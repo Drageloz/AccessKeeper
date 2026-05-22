@@ -83,7 +83,7 @@ async function performCheck(tabId, entry) {
     return;
   }
 
-  const credData = await chrome.storage.session.get('credentials');
+  const credData = await chrome.storage.local.get('credentials');
   const creds = credData.credentials;
   const hasCreds = !!(creds?.username && creds?.password);
   const isPAMPage = (response.url || '').toLowerCase().includes('pam');
@@ -113,16 +113,17 @@ async function performCheck(tabId, entry) {
 
     // Step 1: fill Scotia ID (username) and click Next.
     // Page 2 will show Password + Auth Method + OTP fields together.
+    // The content script polls until the Next button is enabled before clicking.
     await setPending(tabId, siteId, true, 'pam_otp');
     setTimeout(async () => {
       try {
         await chrome.tabs.sendMessage(tabId, { action: 'fillUsernameAndNext', username: creds.username });
       } catch {}
-    }, 400);
+    }, 1000);
     return;
   }
 
-  // --- Normal login ---
+  // --- Step 1: try normal login ---
   if (step === 'initial' && hasCreds) {
     await setPending(tabId, siteId, true, 'normal_attempted');
     setTimeout(async () => {
@@ -137,16 +138,34 @@ async function performCheck(tabId, entry) {
     return;
   }
 
-  // --- SSO button fallback ---
-  if (step === 'initial' || step === 'normal_attempted') {
-    await setPending(tabId, siteId, true, 'sso_attempted');
+  // --- Step 2: click SSO/BNS button ---
+  if (step === 'normal_attempted') {
     try {
       const result = await chrome.tabs.sendMessage(tabId, { action: 'clickSSO' });
-      if (result?.clicked) return; // SSO clicked, wait for redirect
+      if (result?.clicked) {
+        await setPending(tabId, siteId, true, 'sso_attempted');
+        return; // wait for SSO redirect chain to settle
+      }
     } catch {}
+    // No SSO/BNS button found — fall through to expired
   }
 
-  // All strategies exhausted
+  // --- Step 3: after SSO redirect, try credentials on the new login page ---
+  if (step === 'sso_attempted' && hasCreds) {
+    await setPending(tabId, siteId, true, 'post_sso_login');
+    setTimeout(async () => {
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          action: 'fillCredentials',
+          username: creds.username,
+          password: creds.password,
+        });
+      } catch {}
+    }, 400);
+    return;
+  }
+
+  // All strategies exhausted (post_sso_login failed, no SSO button, or no credentials)
   await updateSiteStatus(siteId, 'expired');
   await removePending(tabId);
 }
@@ -195,7 +214,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const { tabId, siteId, otp } = message;
       await chrome.storage.local.remove('pendingOTP');
       await setPending(Number(tabId), siteId, true, 'pam_otp_submitted');
-      const credData = await chrome.storage.session.get('credentials');
+      const credData = await chrome.storage.local.get('credentials');
       setTimeout(async () => {
         try {
           await chrome.tabs.sendMessage(Number(tabId), {

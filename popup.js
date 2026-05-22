@@ -87,7 +87,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // --- Credentials ---
 
 async function loadCredentialStatus() {
-  const data = await chrome.storage.session.get('credentials');
+  const data = await chrome.storage.local.get('credentials');
   const creds = data.credentials;
   const statusEl = document.getElementById('credStatus');
   if (creds?.username && creds?.password) {
@@ -104,13 +104,13 @@ document.getElementById('saveCredBtn').addEventListener('click', async () => {
   const username = document.getElementById('credUsername').value.trim();
   const password = document.getElementById('credPassword').value;
   if (!username || !password) return;
-  await chrome.storage.session.set({ credentials: { username, password } });
+  await chrome.storage.local.set({ credentials: { username, password } });
   document.getElementById('credPassword').value = '';
   await loadCredentialStatus();
 });
 
 document.getElementById('clearCredBtn').addEventListener('click', async () => {
-  await chrome.storage.session.remove('credentials');
+  await chrome.storage.local.remove('credentials');
   document.getElementById('credUsername').value = '';
   document.getElementById('credPassword').value = '';
   await loadCredentialStatus();
