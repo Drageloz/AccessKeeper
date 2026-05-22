@@ -26,6 +26,8 @@ function isLoginPage() {
   if (SSO_HOSTNAMES.some(h => hostname.includes(h))) return true;
   if (LOGIN_URL_PATTERNS.some(p => url.includes(p.toLowerCase()))) return true;
   if (document.querySelector('input[type="password"]')) return true;
+  // SSO-only pages (no password field, just a BNS/SSO button)
+  if (findSSOButton() !== null) return true;
   return false;
 }
 
@@ -131,14 +133,25 @@ function fillCredentials(username, password) {
   else (passwordField?.form || usernameField?.form)?.submit();
 }
 
-// Polls until the given button finder returns an enabled, visible button (or timeout)
+// Checks all common patterns a page might use to mark a button as non-interactive
+function isButtonClickable(btn) {
+  if (!btn) return false;
+  if (btn.disabled) return false;
+  if (btn.getAttribute('aria-disabled') === 'true') return false;
+  if (/\bdisabled\b/i.test(btn.className)) return false;
+  if (btn.offsetParent === null) return false; // not visible
+  return true;
+}
+
+// Polls until the button is clickable, or until timeout.
+// On timeout returns the button anyway — better to try than to give up.
 function waitForEnabledButton(finderFn, timeoutMs = 10000) {
   return new Promise(resolve => {
     const deadline = Date.now() + timeoutMs;
     const check = () => {
       const btn = finderFn();
-      if (btn && !btn.disabled && btn.offsetParent !== null) return resolve(btn);
-      if (Date.now() >= deadline) return resolve(btn || null);
+      if (isButtonClickable(btn)) return resolve(btn);
+      if (Date.now() >= deadline) return resolve(finderFn() || null); // try anyway
       setTimeout(check, 400);
     };
     check();
@@ -146,12 +159,14 @@ function waitForEnabledButton(finderFn, timeoutMs = 10000) {
 }
 
 // --- PAM step 1: fill Scotia ID (username) and click Next ---
-// Next button may take a few seconds to become enabled after page load.
+// Dispatches blur to trigger the form validation that activates the Next button,
+// then polls until the button is actually clickable (can take a few seconds).
 async function fillUsernameAndNext(username) {
   const usernameField = findUsernameField();
   if (!usernameField) return;
   usernameField.focus();
   setNativeValue(usernameField, username);
+  usernameField.dispatchEvent(new Event('blur', { bubbles: true }));
   const btn = await waitForEnabledButton(findNextButton, 10000);
   if (btn) btn.click();
   else usernameField.form?.submit();
@@ -187,6 +202,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   switch (message.action) {
     case 'getLoginState':
       sendResponse({ isLoginPage: isLoginPage(), url: window.location.href });
+      break;
+    case 'hasLoginForm':
+      sendResponse({ hasLoginForm: !!(findUsernameField() || document.querySelector('input[type="password"]')) });
       break;
     case 'fillCredentials':
       fillCredentials(message.username, message.password);

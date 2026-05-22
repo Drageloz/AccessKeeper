@@ -123,23 +123,33 @@ async function performCheck(tabId, entry) {
     return;
   }
 
-  // --- Step 1: try normal login ---
+  // --- Step 1: try normal login (skip if SSO-only page with no form fields) ---
   if (step === 'initial' && hasCreds) {
-    await setPending(tabId, siteId, true, 'normal_attempted');
-    setTimeout(async () => {
-      try {
-        await chrome.tabs.sendMessage(tabId, {
-          action: 'fillCredentials',
-          username: creds.username,
-          password: creds.password,
-        });
-      } catch {}
-    }, 400);
-    return;
+    let hasForm = false;
+    try {
+      const formCheck = await chrome.tabs.sendMessage(tabId, { action: 'hasLoginForm' });
+      hasForm = !!formCheck?.hasLoginForm;
+    } catch {}
+
+    if (hasForm) {
+      await setPending(tabId, siteId, true, 'normal_attempted');
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(tabId, {
+            action: 'fillCredentials',
+            username: creds.username,
+            password: creds.password,
+          });
+        } catch {}
+      }, 400);
+      return;
+    }
+    // SSO-only page — fall through to click the SSO button immediately
   }
 
   // --- Step 2: click SSO/BNS button ---
-  if (step === 'normal_attempted') {
+  // Runs for: SSO-only pages at 'initial' step, OR after a failed normal login attempt
+  if (step === 'initial' || step === 'normal_attempted') {
     try {
       const result = await chrome.tabs.sendMessage(tabId, { action: 'clickSSO' });
       if (result?.clicked) {
@@ -150,9 +160,11 @@ async function performCheck(tabId, entry) {
     // No SSO/BNS button found — fall through to expired
   }
 
-  // --- Step 3: after SSO redirect, try credentials on the new login page ---
-  if (step === 'sso_attempted' && hasCreds) {
-    await setPending(tabId, siteId, true, 'post_sso_login');
+  // --- Steps 3-5: try credentials after SSO redirect, up to 3 times ---
+  // Each attempt handles one step of a multi-step SSO form (e.g. email → Next → password).
+  const POST_SSO_STEPS = { 'sso_attempted': 'post_sso_1', 'post_sso_1': 'post_sso_2', 'post_sso_2': 'post_sso_3' };
+  if (POST_SSO_STEPS[step] && hasCreds) {
+    await setPending(tabId, siteId, true, POST_SSO_STEPS[step]);
     setTimeout(async () => {
       try {
         await chrome.tabs.sendMessage(tabId, {
@@ -165,7 +177,7 @@ async function performCheck(tabId, entry) {
     return;
   }
 
-  // All strategies exhausted (post_sso_login failed, no SSO button, or no credentials)
+  // All strategies exhausted
   await updateSiteStatus(siteId, 'expired');
   await removePending(tabId);
 }
