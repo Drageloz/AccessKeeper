@@ -6,6 +6,22 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
+
+  <!-- OTP overlay — shown when a PAM site requires a one-time password -->
+  <div class="otp-overlay" id="otpOverlay">
+    <div class="otp-modal">
+      <p class="otp-title">One-Time Password required</p>
+      <p class="otp-subtitle" id="otpSiteName"></p>
+      <input type="text" id="otpInput" class="cred-input otp-input"
+             placeholder="Enter OTP code" maxlength="8"
+             autocomplete="one-time-code" inputmode="numeric">
+      <div class="otp-actions">
+        <button id="otpCancelBtn" class="btn btn-secondary btn-sm">Cancel</button>
+        <button id="otpSubmitBtn" class="btn btn-primary btn-sm">Submit</button>
+      </div>
+    </div>
+  </div>
+
   <div class="header">
     <div class="header-title">
       <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

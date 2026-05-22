@@ -1,16 +1,18 @@
 importScripts('./sites.js');
 
-// --- Pending checks (chrome.storage.session survives service worker restarts) ---
-// Structure: { "tabId": { siteId, hadLoginPage, autoFillAttempted } }
+// --- Pending checks ---
+// Structure: { "tabId": { siteId, hadLoginPage, step } }
+// Steps: 'initial' | 'normal_attempted' | 'sso_attempted' |
+//        'pam_password' | 'pam_otp' | 'pam_otp_submitted'
 
 async function getPending() {
   const data = await chrome.storage.session.get('pendingChecks');
   return data.pendingChecks || {};
 }
 
-async function setPending(tabId, siteId, hadLoginPage = false, autoFillAttempted = false) {
+async function setPending(tabId, siteId, hadLoginPage = false, step = 'initial') {
   const checks = await getPending();
-  checks[String(tabId)] = { siteId, hadLoginPage, autoFillAttempted };
+  checks[String(tabId)] = { siteId, hadLoginPage, step };
   await chrome.storage.session.set({ pendingChecks: checks });
 }
 
@@ -41,101 +43,148 @@ async function updateSiteStatus(siteId, status) {
 
 async function updateBadge(statuses) {
   if (!statuses) statuses = await getStatuses();
-  const expired = Object.values(statuses).filter(s => s.status === 'expired').length;
+  const vals = Object.values(statuses);
+  const otpCount     = vals.filter(s => s.status === 'otp').length;
+  const expiredCount = vals.filter(s => s.status === 'expired').length;
 
-  if (expired > 0) {
-    await chrome.action.setBadgeText({ text: String(expired) });
+  if (otpCount > 0) {
+    await chrome.action.setBadgeText({ text: 'OTP' });
+    await chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
+  } else if (expiredCount > 0) {
+    await chrome.action.setBadgeText({ text: String(expiredCount) });
     await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
   } else {
     await chrome.action.setBadgeText({ text: '' });
   }
 }
 
-// --- Check logic ---
+// --- Auth strategy dispatcher ---
 
-async function checkSite(siteId) {
-  const site = SITES.find(s => s.id === siteId);
-  if (!site) return;
+async function performCheck(tabId, entry) {
+  const { siteId, hadLoginPage, step } = entry;
 
-  await updateSiteStatus(siteId, 'checking');
-  const tab = await chrome.tabs.create({ url: site.url, active: false });
-  await setPending(tab.id, siteId);
-}
-
-async function checkAllSites() {
-  for (const site of SITES) {
-    await checkSite(site.id);
-    await new Promise(r => setTimeout(r, 700));
-  }
-}
-
-// --- Tab tracking ---
-
-// Per-tab debounce: fires only after redirects have settled
-const debounceTimers = {};
-
-async function performCheck(tabId, siteId, hadLoginPage, autoFillAttempted) {
+  let response;
   try {
-    const response = await chrome.tabs.sendMessage(tabId, { action: 'getLoginState' });
-
-    if (response?.isLoginPage) {
-      const credData = await chrome.storage.session.get('credentials');
-      const hasCreds = !!(credData.credentials?.username && credData.credentials?.password);
-
-      if (hasCreds && !autoFillAttempted) {
-        // Credentials available and not yet tried: stay 'checking', attempt auto-fill.
-        // The post-login redirect chain will trigger a new debounce cycle.
-        await setPending(tabId, siteId, true, true);
-        setTimeout(async () => {
-          try {
-            await chrome.tabs.sendMessage(tabId, {
-              action: 'fillCredentials',
-              username: credData.credentials.username,
-              password: credData.credentials.password,
-            });
-          } catch {}
-        }, 400);
-      } else {
-        // No credentials stored, or auto-fill already attempted and failed.
-        await updateSiteStatus(siteId, 'expired');
-        await setPending(tabId, siteId, true, autoFillAttempted);
-      }
-    } else {
-      await updateSiteStatus(siteId, 'active');
-      await removePending(tabId);
-
-      if (!hadLoginPage) {
-        // Session was already active: auto-close the tab
-        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1200);
-      }
-      // hadLoginPage=true means user just completed login — keep the tab open
-    }
+    response = await chrome.tabs.sendMessage(tabId, { action: 'getLoginState' });
   } catch {
-    // Content script did not respond (PDF, chrome://, etc.)
     await updateSiteStatus(siteId, 'unknown');
     await removePending(tabId);
+    return;
   }
+
+  // Not a login page = successfully authenticated
+  if (!response?.isLoginPage) {
+    await updateSiteStatus(siteId, 'active');
+    await removePending(tabId);
+    if (!hadLoginPage) {
+      // Session was already valid: close the background tab
+      setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1200);
+    }
+    return;
+  }
+
+  const credData = await chrome.storage.session.get('credentials');
+  const creds = credData.credentials;
+  const hasCreds = !!(creds?.username && creds?.password);
+  const isPAMPage = (response.url || '').toLowerCase().includes('pam');
+
+  // --- PAM multi-step flow ---
+  if (isPAMPage) {
+    if (!hasCreds) {
+      await updateSiteStatus(siteId, 'expired');
+      await removePending(tabId);
+      return;
+    }
+
+    if (step === 'pam_otp_submitted') {
+      // OTP was tried and the page is still a login page: nothing left to do
+      await updateSiteStatus(siteId, 'expired');
+      await removePending(tabId);
+      return;
+    }
+
+    if (step === 'pam_otp') {
+      // Request OTP from the user via popup
+      await updateSiteStatus(siteId, 'otp');
+      await chrome.storage.local.set({ pendingOTP: { tabId, siteId } });
+      return;
+    }
+
+    if (step === 'pam_password') {
+      // Step 2: fill password and submit
+      await setPending(tabId, siteId, true, 'pam_otp');
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(tabId, { action: 'fillPassword', password: creds.password });
+        } catch {}
+      }, 400);
+      return;
+    }
+
+    // Step 1 (initial / sso_attempted): fill username and click Next
+    await setPending(tabId, siteId, true, 'pam_password');
+    setTimeout(async () => {
+      try {
+        await chrome.tabs.sendMessage(tabId, { action: 'fillUsernameAndNext', username: creds.username });
+      } catch {}
+    }, 400);
+    return;
+  }
+
+  // --- Normal login ---
+  if (step === 'initial' && hasCreds) {
+    await setPending(tabId, siteId, true, 'normal_attempted');
+    setTimeout(async () => {
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          action: 'fillCredentials',
+          username: creds.username,
+          password: creds.password,
+        });
+      } catch {}
+    }, 400);
+    return;
+  }
+
+  // --- SSO button fallback ---
+  if (step === 'initial' || step === 'normal_attempted') {
+    await setPending(tabId, siteId, true, 'sso_attempted');
+    try {
+      const result = await chrome.tabs.sendMessage(tabId, { action: 'clickSSO' });
+      if (result?.clicked) return; // SSO clicked, wait for redirect
+    } catch {}
+  }
+
+  // All strategies exhausted
+  await updateSiteStatus(siteId, 'expired');
+  await removePending(tabId);
 }
+
+// --- Tab tracking with debounce ---
+
+const debounceTimers = {};
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (changeInfo.status !== 'complete') return;
 
   const checks = await getPending();
-  const entry = checks[String(tabId)];
-  if (!entry) return;
+  if (!checks[String(tabId)]) return;
 
-  // Reset timer on each 'complete' event to wait for the final page
-  // after all redirects (including JS-based ones) have settled.
+  // Reset timer on each 'complete' to wait for the full redirect chain to settle
   clearTimeout(debounceTimers[tabId]);
-  debounceTimers[tabId] = setTimeout(() => {
+  debounceTimers[tabId] = setTimeout(async () => {
     delete debounceTimers[tabId];
-    performCheck(tabId, entry.siteId, entry.hadLoginPage, entry.autoFillAttempted || false);
+    // Read entry fresh — it may have been updated since the listener fired
+    const freshChecks = await getPending();
+    const freshEntry = freshChecks[String(tabId)];
+    if (freshEntry) await performCheck(tabId, freshEntry);
   }, 2000);
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   clearTimeout(debounceTimers[tabId]);
   delete debounceTimers[tabId];
+  await chrome.storage.local.remove('pendingOTP');
   const checks = await getPending();
   if (checks[String(tabId)]) await removePending(tabId);
 });
@@ -151,13 +200,43 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     } else if (message.action === 'openSite') {
       const site = SITES.find(s => s.id === message.siteId);
       if (site) await chrome.tabs.create({ url: site.url, active: true });
+    } else if (message.action === 'submitOTP') {
+      const { tabId, siteId, otp } = message;
+      await chrome.storage.local.remove('pendingOTP');
+      await setPending(Number(tabId), siteId, true, 'pam_otp_submitted');
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(Number(tabId), { action: 'fillOTP', otp });
+        } catch {}
+      }, 300);
+    } else if (message.action === 'cancelOTP') {
+      await chrome.storage.local.remove('pendingOTP');
+      await updateSiteStatus(message.siteId, 'expired');
+      await removePending(message.tabId);
     }
     sendResponse({ ok: true });
   })();
   return true;
 });
 
-// --- Auto-check alarm (every 4 hours) ---
+// --- Site check logic ---
+
+async function checkSite(siteId) {
+  const site = SITES.find(s => s.id === siteId);
+  if (!site) return;
+  await updateSiteStatus(siteId, 'checking');
+  const tab = await chrome.tabs.create({ url: site.url, active: false });
+  await setPending(tab.id, siteId);
+}
+
+async function checkAllSites() {
+  for (const site of SITES) {
+    await checkSite(site.id);
+    await new Promise(r => setTimeout(r, 700));
+  }
+}
+
+// --- Auto-check alarm (twice a month) ---
 
 async function initAlarm() {
   const alarm = await chrome.alarms.get('autoCheck');
