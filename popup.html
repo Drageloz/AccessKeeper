@@ -7,21 +7,6 @@
 </head>
 <body>
 
-  <!-- OTP overlay — shown when a PAM site requires a one-time password -->
-  <div class="otp-overlay" id="otpOverlay">
-    <div class="otp-modal">
-      <p class="otp-title">One-Time Password required</p>
-      <p class="otp-subtitle" id="otpSiteName"></p>
-      <input type="text" id="otpInput" class="cred-input otp-input"
-             placeholder="Enter OTP code" maxlength="8"
-             autocomplete="one-time-code" inputmode="numeric">
-      <div class="otp-actions">
-        <button id="otpCancelBtn" class="btn btn-secondary btn-sm">Cancel</button>
-        <button id="otpSubmitBtn" class="btn btn-primary btn-sm">Submit</button>
-      </div>
-    </div>
-  </div>
-
   <div class="header">
     <div class="header-title">
       <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -52,11 +37,13 @@
     <div class="credentials-body" id="credentialsBody">
       <input type="text" id="credUsername" class="cred-input" placeholder="Username" autocomplete="off" spellcheck="false">
       <input type="password" id="credPassword" class="cred-input" placeholder="Password" autocomplete="new-password">
+      <input type="text" id="credOTP" class="cred-input" placeholder="One-Time Password (PAM only)"
+             autocomplete="off" inputmode="numeric" maxlength="8">
       <div class="cred-actions">
         <button id="clearCredBtn" class="btn btn-secondary btn-sm">Clear</button>
-        <button id="saveCredBtn" class="btn btn-primary btn-sm">Save to session</button>
+        <button id="saveCredBtn" class="btn btn-primary btn-sm">Save</button>
       </div>
-      <p class="cred-note">Saved locally on this device · Encrypted by Chrome</p>
+      <p class="cred-note">Credentials saved locally · OTP not persisted</p>
     </div>
   </div>
 

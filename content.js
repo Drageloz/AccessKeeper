@@ -35,7 +35,7 @@ function isLoginPage() {
 function setNativeValue(el, value) {
   const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
   descriptor.set.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
@@ -159,17 +159,25 @@ function waitForEnabledButton(finderFn, timeoutMs = 10000) {
 }
 
 // --- PAM step 1: fill Scotia ID (username) and click Next ---
-// Dispatches blur to trigger the form validation that activates the Next button,
-// then polls until the button is actually clickable (can take a few seconds).
+// Dispatches keyup + blur to trigger PAM's form validation that enables the Next button,
+// then polls until clickable. Falls back to form.requestSubmit() if the button click
+// has no effect (some PAM versions ignore synthetic clicks on disabled buttons).
 async function fillUsernameAndNext(username) {
   const usernameField = findUsernameField();
   if (!usernameField) return;
   usernameField.focus();
   setNativeValue(usernameField, username);
+  usernameField.dispatchEvent(new Event('keyup', { bubbles: true }));
   usernameField.dispatchEvent(new Event('blur', { bubbles: true }));
   const btn = await waitForEnabledButton(findNextButton, 10000);
   if (btn) btn.click();
-  else usernameField.form?.submit();
+  // Belt-and-suspenders: if the click had no effect (page didn't navigate),
+  // try submitting the form. The setTimeout fires on the old document only if
+  // the page didn't navigate; if it did, this is a no-op on a detached form.
+  const form = usernameField.form;
+  if (form) {
+    setTimeout(() => { try { form.requestSubmit(); } catch { try { form.submit(); } catch {} } }, 800);
+  }
 }
 
 // --- PAM step 2: fill password + OTP together and submit ---

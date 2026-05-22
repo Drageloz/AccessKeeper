@@ -1,9 +1,8 @@
 const STATUS_CONFIG = {
-  active:   { label: 'Active',         cssClass: 'status-active',   cardClass: 'card-active' },
-  expired:  { label: 'Expired',        cssClass: 'status-expired',  cardClass: 'card-expired' },
-  checking: { label: 'Checking',       cssClass: 'status-checking', cardClass: 'card-checking' },
-  otp:      { label: 'OTP Required',   cssClass: 'status-otp',      cardClass: 'card-otp' },
-  unknown:  { label: 'Unchecked',      cssClass: 'status-unknown',  cardClass: 'card-unknown' },
+  active:   { label: 'Active',    cssClass: 'status-active',   cardClass: 'card-active' },
+  expired:  { label: 'Expired',   cssClass: 'status-expired',  cardClass: 'card-expired' },
+  checking: { label: 'Checking',  cssClass: 'status-checking', cardClass: 'card-checking' },
+  unknown:  { label: 'Unchecked', cssClass: 'status-unknown',  cardClass: 'card-unknown' },
 };
 
 function formatTimeAgo(ts) {
@@ -30,7 +29,7 @@ function renderSites(statuses) {
   list.innerHTML = SITES.map(site => {
     const siteStatus = statuses[site.id] || { status: 'unknown' };
     const cfg = STATUS_CONFIG[siteStatus.status] || STATUS_CONFIG.unknown;
-    const isChecking = siteStatus.status === 'checking' || siteStatus.status === 'otp';
+    const isChecking = siteStatus.status === 'checking';
 
     return `
       <div class="site-card ${cfg.cardClass}">
@@ -81,14 +80,16 @@ document.getElementById('checkAllBtn').addEventListener('click', () => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (changes.siteStatuses) renderSites(changes.siteStatuses.newValue || {});
-  if (changes.pendingOTP)   handlePendingOTPChange(changes.pendingOTP.newValue);
 });
 
 // --- Credentials ---
 
 async function loadCredentialStatus() {
-  const data = await chrome.storage.local.get('credentials');
-  const creds = data.credentials;
+  const [localData, sessionData] = await Promise.all([
+    chrome.storage.local.get('credentials'),
+    chrome.storage.session.get('pamOTP'),
+  ]);
+  const creds = localData.credentials;
   const statusEl = document.getElementById('credStatus');
   if (creds?.username && creds?.password) {
     statusEl.textContent = creds.username;
@@ -98,6 +99,7 @@ async function loadCredentialStatus() {
     statusEl.textContent = 'Not configured';
     statusEl.className = 'cred-status cred-not-set';
   }
+  document.getElementById('credOTP').value = sessionData.pamOTP || '';
 }
 
 document.getElementById('saveCredBtn').addEventListener('click', async () => {
@@ -111,8 +113,10 @@ document.getElementById('saveCredBtn').addEventListener('click', async () => {
 
 document.getElementById('clearCredBtn').addEventListener('click', async () => {
   await chrome.storage.local.remove('credentials');
+  await chrome.storage.session.remove('pamOTP');
   document.getElementById('credUsername').value = '';
   document.getElementById('credPassword').value = '';
+  document.getElementById('credOTP').value = '';
   await loadCredentialStatus();
 });
 
@@ -123,48 +127,10 @@ document.getElementById('credentialsToggle').addEventListener('click', () => {
 
 loadCredentialStatus();
 
-// --- OTP overlay ---
+// --- OTP (PAM only) — auto-saved to session storage on change, cleared after use ---
 
-let currentOTPData = null;
-
-function showOTPOverlay(otpData) {
-  currentOTPData = otpData;
-  const site = SITES.find(s => s.id === otpData.siteId);
-  document.getElementById('otpSiteName').textContent = site ? site.name : otpData.siteId;
-  document.getElementById('otpInput').value = '';
-  document.getElementById('otpOverlay').classList.add('visible');
-  setTimeout(() => document.getElementById('otpInput').focus(), 50);
-}
-
-function hideOTPOverlay() {
-  currentOTPData = null;
-  document.getElementById('otpOverlay').classList.remove('visible');
-}
-
-function handlePendingOTPChange(newValue) {
-  if (newValue) showOTPOverlay(newValue);
-  else hideOTPOverlay();
-}
-
-document.getElementById('otpSubmitBtn').addEventListener('click', () => {
-  const otp = document.getElementById('otpInput').value.trim();
-  if (!otp || !currentOTPData) return;
-  chrome.runtime.sendMessage({ action: 'submitOTP', ...currentOTPData, otp });
-  hideOTPOverlay();
-});
-
-document.getElementById('otpInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') document.getElementById('otpSubmitBtn').click();
-});
-
-document.getElementById('otpCancelBtn').addEventListener('click', () => {
-  if (currentOTPData) {
-    chrome.runtime.sendMessage({ action: 'cancelOTP', ...currentOTPData });
-  }
-  hideOTPOverlay();
-});
-
-// Check for a pending OTP request when popup opens
-chrome.storage.local.get('pendingOTP').then(data => {
-  if (data.pendingOTP) showOTPOverlay(data.pendingOTP);
+document.getElementById('credOTP').addEventListener('change', async () => {
+  const otp = document.getElementById('credOTP').value.trim();
+  if (otp) await chrome.storage.session.set({ pamOTP: otp });
+  else await chrome.storage.session.remove('pamOTP');
 });

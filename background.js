@@ -44,13 +44,8 @@ async function updateSiteStatus(siteId, status) {
 async function updateBadge(statuses) {
   if (!statuses) statuses = await getStatuses();
   const vals = Object.values(statuses);
-  const otpCount     = vals.filter(s => s.status === 'otp').length;
   const expiredCount = vals.filter(s => s.status === 'expired').length;
-
-  if (otpCount > 0) {
-    await chrome.action.setBadgeText({ text: 'OTP' });
-    await chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
-  } else if (expiredCount > 0) {
+  if (expiredCount > 0) {
     await chrome.action.setBadgeText({ text: String(expiredCount) });
     await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
   } else {
@@ -104,10 +99,27 @@ async function performCheck(tabId, entry) {
     }
 
     if (step === 'pam_otp') {
-      // Page 2: Password + Authentication Method (default) + OTP are all visible.
-      // Request OTP from the user — password and OTP will be submitted together.
-      await updateSiteStatus(siteId, 'otp');
-      await chrome.storage.local.set({ pendingOTP: { tabId, siteId } });
+      // Page 2: Password + OTP fields visible.
+      // Read the OTP the user entered in the popup before starting the check.
+      const sessionData = await chrome.storage.session.get('pamOTP');
+      const otp = sessionData.pamOTP;
+      if (!otp) {
+        // No OTP was pre-entered — nothing left to try.
+        await updateSiteStatus(siteId, 'expired');
+        await removePending(tabId);
+        return;
+      }
+      await chrome.storage.session.remove('pamOTP'); // clear after single use
+      await setPending(tabId, siteId, true, 'pam_otp_submitted');
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(tabId, {
+            action: 'fillPasswordAndOTP',
+            password: creds.password,
+            otp,
+          });
+        } catch {}
+      }, 300);
       return;
     }
 
@@ -119,7 +131,7 @@ async function performCheck(tabId, entry) {
       try {
         await chrome.tabs.sendMessage(tabId, { action: 'fillUsernameAndNext', username: creds.username });
       } catch {}
-    }, 1000);
+    }, 2000); // extra time for PAM's JS framework to initialize
     return;
   }
 
@@ -206,7 +218,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   clearTimeout(debounceTimers[tabId]);
   delete debounceTimers[tabId];
-  await chrome.storage.local.remove('pendingOTP');
   const checks = await getPending();
   if (checks[String(tabId)]) await removePending(tabId);
 });
@@ -222,24 +233,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     } else if (message.action === 'openSite') {
       const site = SITES.find(s => s.id === message.siteId);
       if (site) await chrome.tabs.create({ url: site.url, active: true });
-    } else if (message.action === 'submitOTP') {
-      const { tabId, siteId, otp } = message;
-      await chrome.storage.local.remove('pendingOTP');
-      await setPending(Number(tabId), siteId, true, 'pam_otp_submitted');
-      const credData = await chrome.storage.local.get('credentials');
-      setTimeout(async () => {
-        try {
-          await chrome.tabs.sendMessage(Number(tabId), {
-            action: 'fillPasswordAndOTP',
-            password: credData.credentials?.password,
-            otp,
-          });
-        } catch {}
-      }, 300);
-    } else if (message.action === 'cancelOTP') {
-      await chrome.storage.local.remove('pendingOTP');
-      await updateSiteStatus(message.siteId, 'expired');
-      await removePending(message.tabId);
     }
     sendResponse({ ok: true });
   })();
