@@ -161,7 +161,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 async function initAlarm() {
   const alarm = await chrome.alarms.get('autoCheck');
-  if (!alarm) chrome.alarms.create('autoCheck', { periodInMinutes: 240 });
+  if (!alarm) chrome.alarms.create('autoCheck', { periodInMinutes: 21600 }); // every 15 days
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
