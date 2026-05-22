@@ -96,3 +96,44 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderSites(changes.siteStatuses.newValue || {});
   }
 });
+
+// --- Credenciales ---
+
+async function loadCredentialStatus() {
+  const data = await chrome.storage.session.get('credentials');
+  const creds = data.credentials;
+  const statusEl = document.getElementById('credStatus');
+
+  if (creds?.username && creds?.password) {
+    statusEl.textContent = creds.username;
+    statusEl.className = 'cred-status cred-set';
+    document.getElementById('credUsername').value = creds.username;
+  } else {
+    statusEl.textContent = 'No configurado';
+    statusEl.className = 'cred-status cred-not-set';
+  }
+}
+
+document.getElementById('saveCredBtn').addEventListener('click', async () => {
+  const username = document.getElementById('credUsername').value.trim();
+  const password = document.getElementById('credPassword').value;
+  if (!username || !password) return;
+
+  await chrome.storage.session.set({ credentials: { username, password } });
+  document.getElementById('credPassword').value = '';
+  await loadCredentialStatus();
+});
+
+document.getElementById('clearCredBtn').addEventListener('click', async () => {
+  await chrome.storage.session.remove('credentials');
+  document.getElementById('credUsername').value = '';
+  document.getElementById('credPassword').value = '';
+  await loadCredentialStatus();
+});
+
+document.getElementById('credentialsToggle').addEventListener('click', () => {
+  document.getElementById('credentialsBody').classList.toggle('expanded');
+  document.getElementById('chevronIcon').classList.toggle('open');
+});
+
+loadCredentialStatus();

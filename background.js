@@ -85,8 +85,21 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
     if (response?.isLoginPage) {
       await updateSiteStatus(siteId, 'expired');
-      // Actualizar hadLoginPage y mantener tab abierto para que el usuario pueda loguearse
       await setPending(tabId, siteId, true);
+
+      // Auto-rellenar si el usuario tiene credenciales guardadas en sesión
+      const credData = await chrome.storage.session.get('credentials');
+      if (credData.credentials?.username && credData.credentials?.password) {
+        setTimeout(async () => {
+          try {
+            await chrome.tabs.sendMessage(tabId, {
+              action: 'fillCredentials',
+              username: credData.credentials.username,
+              password: credData.credentials.password,
+            });
+          } catch {}
+        }, 900);
+      }
     } else {
       await updateSiteStatus(siteId, 'active');
       await removePending(tabId);
