@@ -1,16 +1,16 @@
 importScripts('./sites.js');
 
-// --- Pending checks (chrome.storage.session sobrevive reinicios del SW) ---
-// Estructura: { "tabId": { siteId: string, hadLoginPage: boolean } }
+// --- Pending checks (chrome.storage.session survives service worker restarts) ---
+// Structure: { "tabId": { siteId, hadLoginPage, autoFillAttempted } }
 
 async function getPending() {
   const data = await chrome.storage.session.get('pendingChecks');
   return data.pendingChecks || {};
 }
 
-async function setPending(tabId, siteId, hadLoginPage = false) {
+async function setPending(tabId, siteId, hadLoginPage = false, autoFillAttempted = false) {
   const checks = await getPending();
-  checks[String(tabId)] = { siteId, hadLoginPage };
+  checks[String(tabId)] = { siteId, hadLoginPage, autoFillAttempted };
   await chrome.storage.session.set({ pendingChecks: checks });
 }
 
@@ -20,7 +20,7 @@ async function removePending(tabId) {
   await chrome.storage.session.set({ pendingChecks: checks });
 }
 
-// --- Estado de los sitios ---
+// --- Site status ---
 
 async function getStatuses() {
   const data = await chrome.storage.local.get('siteStatuses');
@@ -51,7 +51,7 @@ async function updateBadge(statuses) {
   }
 }
 
-// --- Lógica de verificación ---
+// --- Check logic ---
 
 async function checkSite(siteId) {
   const site = SITES.find(s => s.id === siteId);
@@ -69,22 +69,23 @@ async function checkAllSites() {
   }
 }
 
-// --- Seguimiento de tabs ---
+// --- Tab tracking ---
 
-// Debounce por tab: espera a que terminen todas las redirecciones antes de verificar
+// Per-tab debounce: fires only after redirects have settled
 const debounceTimers = {};
 
-async function performCheck(tabId, siteId, hadLoginPage) {
+async function performCheck(tabId, siteId, hadLoginPage, autoFillAttempted) {
   try {
     const response = await chrome.tabs.sendMessage(tabId, { action: 'getLoginState' });
 
     if (response?.isLoginPage) {
-      await updateSiteStatus(siteId, 'expired');
-      await setPending(tabId, siteId, true);
-
-      // Auto-rellenar si el usuario tiene credenciales guardadas en sesión
       const credData = await chrome.storage.session.get('credentials');
-      if (credData.credentials?.username && credData.credentials?.password) {
+      const hasCreds = !!(credData.credentials?.username && credData.credentials?.password);
+
+      if (hasCreds && !autoFillAttempted) {
+        // Credentials available and not yet tried: stay 'checking', attempt auto-fill.
+        // The post-login redirect chain will trigger a new debounce cycle.
+        await setPending(tabId, siteId, true, true);
         setTimeout(async () => {
           try {
             await chrome.tabs.sendMessage(tabId, {
@@ -94,19 +95,23 @@ async function performCheck(tabId, siteId, hadLoginPage) {
             });
           } catch {}
         }, 400);
+      } else {
+        // No credentials stored, or auto-fill already attempted and failed.
+        await updateSiteStatus(siteId, 'expired');
+        await setPending(tabId, siteId, true, autoFillAttempted);
       }
     } else {
       await updateSiteStatus(siteId, 'active');
       await removePending(tabId);
 
       if (!hadLoginPage) {
-        // Sesión ya estaba activa: cerrar tab automáticamente
+        // Session was already active: auto-close the tab
         setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1200);
       }
-      // Si hadLoginPage=true: el usuario acaba de loguearse, dejar el tab abierto
+      // hadLoginPage=true means user just completed login — keep the tab open
     }
   } catch {
-    // El content script no respondió (PDF, chrome://, etc.)
+    // Content script did not respond (PDF, chrome://, etc.)
     await updateSiteStatus(siteId, 'unknown');
     await removePending(tabId);
   }
@@ -119,30 +124,30 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   const entry = checks[String(tabId)];
   if (!entry) return;
 
-  // Cada redirect dispara un 'complete'. Reseteamos el timer para esperar
-  // al último complete (la página final después de todas las redirecciones).
+  // Reset timer on each 'complete' event to wait for the final page
+  // after all redirects (including JS-based ones) have settled.
   clearTimeout(debounceTimers[tabId]);
   debounceTimers[tabId] = setTimeout(() => {
     delete debounceTimers[tabId];
-    performCheck(tabId, entry.siteId, entry.hadLoginPage);
+    performCheck(tabId, entry.siteId, entry.hadLoginPage, entry.autoFillAttempted || false);
   }, 2000);
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  clearTimeout(debounceTimers[tabId]);
+  delete debounceTimers[tabId];
   const checks = await getPending();
-  if (checks[String(tabId)]) {
-    await removePending(tabId);
-  }
+  if (checks[String(tabId)]) await removePending(tabId);
 });
 
-// --- Mensajes desde el popup ---
+// --- Messages from popup ---
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     if (message.action === 'checkSite') {
       await checkSite(message.siteId);
     } else if (message.action === 'checkAll') {
-      checkAllSites(); // no await: responde inmediatamente al popup
+      checkAllSites();
     } else if (message.action === 'openSite') {
       const site = SITES.find(s => s.id === message.siteId);
       if (site) await chrome.tabs.create({ url: site.url, active: true });
@@ -152,19 +157,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-// --- Auto-verificación cada 4 horas ---
+// --- Auto-check alarm (every 4 hours) ---
 
 async function initAlarm() {
   const alarm = await chrome.alarms.get('autoCheck');
-  if (!alarm) {
-    chrome.alarms.create('autoCheck', { periodInMinutes: 240 });
-  }
+  if (!alarm) chrome.alarms.create('autoCheck', { periodInMinutes: 240 });
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'autoCheck') checkAllSites();
 });
 
-// Inicialización
 initAlarm();
 updateBadge();

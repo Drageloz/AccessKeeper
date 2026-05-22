@@ -1,4 +1,4 @@
-// Detecta si la página actual es una pantalla de login y auto-rellena credenciales
+// Detects whether the current page is a login screen and auto-fills credentials
 
 const SSO_HOSTNAMES = [
   'login.microsoftonline.com',
@@ -39,7 +39,7 @@ function isLoginPage() {
   return false;
 }
 
-// Dispara eventos nativos para que frameworks como React/Angular reconozcan el cambio
+// Fires native input/change events so React/Angular forms detect the value change
 function setNativeValue(el, value) {
   const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
   descriptor.set.call(el, value);

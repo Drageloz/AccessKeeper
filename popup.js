@@ -1,8 +1,8 @@
 const STATUS_CONFIG = {
-  active:   { label: 'Activo',       cssClass: 'status-active',   cardClass: 'card-active' },
-  expired:  { label: 'Expirado',     cssClass: 'status-expired',  cardClass: 'card-expired' },
-  checking: { label: 'Verificando',  cssClass: 'status-checking', cardClass: 'card-checking' },
-  unknown:  { label: 'Sin verificar',cssClass: 'status-unknown',  cardClass: 'card-unknown' },
+  active:   { label: 'Active',      cssClass: 'status-active',   cardClass: 'card-active' },
+  expired:  { label: 'Expired',     cssClass: 'status-expired',  cardClass: 'card-expired' },
+  checking: { label: 'Checking',    cssClass: 'status-checking', cardClass: 'card-checking' },
+  unknown:  { label: 'Unchecked',   cssClass: 'status-unknown',  cardClass: 'card-unknown' },
 };
 
 function formatTimeAgo(ts) {
@@ -12,17 +12,17 @@ function formatTimeAgo(ts) {
   const hours = Math.floor(mins / 60);
   const days = Math.floor(hours / 24);
 
-  if (mins < 1)  return 'ahora mismo';
-  if (mins < 60) return `hace ${mins}m`;
-  if (hours < 24) return `hace ${hours}h`;
-  return `hace ${days}d`;
+  if (mins < 1)   return 'just now';
+  if (mins < 60)  return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
 }
 
 function buildMeta(siteStatus) {
   const parts = [];
-  if (siteStatus.lastChecked) parts.push(`Verificado ${formatTimeAgo(siteStatus.lastChecked)}`);
-  if (siteStatus.lastActive)  parts.push(`Activo ${formatTimeAgo(siteStatus.lastActive)}`);
-  return parts.join(' · ') || 'No verificado aún';
+  if (siteStatus.lastChecked) parts.push(`Checked ${formatTimeAgo(siteStatus.lastChecked)}`);
+  if (siteStatus.lastActive)  parts.push(`Active ${formatTimeAgo(siteStatus.lastActive)}`);
+  return parts.join(' · ') || 'Never checked';
 }
 
 function renderSites(statuses) {
@@ -47,11 +47,11 @@ function renderSites(statuses) {
           <span class="site-meta">${buildMeta(siteStatus)}</span>
         </div>
         <div class="site-actions">
-          <button class="btn btn-secondary btn-sm visit-btn" data-id="${site.id}" title="Abrir en nueva pestaña">
-            Visitar
+          <button class="btn btn-secondary btn-sm visit-btn" data-id="${site.id}" title="Open in new tab">
+            Visit
           </button>
           <button class="btn btn-primary btn-sm check-btn" data-id="${site.id}" ${isChecking ? 'disabled' : ''}>
-            ${isChecking ? '···' : 'Verificar'}
+            ${isChecking ? '···' : 'Check'}
           </button>
         </div>
       </div>
@@ -80,22 +80,20 @@ async function loadAndRender() {
   renderSites(data.siteStatuses || {});
 }
 
-// Render inicial
 loadAndRender();
 
-// Botón "Verificar Todo"
 document.getElementById('checkAllBtn').addEventListener('click', () => {
   chrome.runtime.sendMessage({ action: 'checkAll' });
 });
 
-// Actualización en tiempo real cuando cambia el storage
+// Re-render whenever status changes in storage
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.siteStatuses) {
     renderSites(changes.siteStatuses.newValue || {});
   }
 });
 
-// --- Credenciales ---
+// --- Credentials ---
 
 async function loadCredentialStatus() {
   const data = await chrome.storage.session.get('credentials');
@@ -107,7 +105,7 @@ async function loadCredentialStatus() {
     statusEl.className = 'cred-status cred-set';
     document.getElementById('credUsername').value = creds.username;
   } else {
-    statusEl.textContent = 'No configurado';
+    statusEl.textContent = 'Not configured';
     statusEl.className = 'cred-status cred-not-set';
   }
 }

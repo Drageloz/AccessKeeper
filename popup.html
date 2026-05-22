@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Access Keeper</title>
@@ -14,11 +14,11 @@
       </svg>
       <h1>Access Keeper</h1>
     </div>
-    <button id="checkAllBtn" class="btn btn-primary">Verificar Todo</button>
+    <button id="checkAllBtn" class="btn btn-primary">Check All</button>
   </div>
 
   <div id="siteList" class="site-list">
-    <div class="loading">Cargando...</div>
+    <div class="loading">Loading...</div>
   </div>
 
   <div class="credentials-section">
@@ -27,25 +27,25 @@
         <circle cx="12" cy="8" r="4"/>
         <path d="M20 21a8 8 0 1 0-16 0"/>
       </svg>
-      <span class="cred-title">Mis credenciales</span>
-      <span id="credStatus" class="cred-status cred-not-set">No configurado</span>
+      <span class="cred-title">My credentials</span>
+      <span id="credStatus" class="cred-status cred-not-set">Not configured</span>
       <svg class="chevron" id="chevronIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="6 9 12 15 18 9"/>
       </svg>
     </div>
     <div class="credentials-body" id="credentialsBody">
-      <input type="text" id="credUsername" class="cred-input" placeholder="Usuario" autocomplete="off" spellcheck="false">
-      <input type="password" id="credPassword" class="cred-input" placeholder="Contraseña" autocomplete="new-password">
+      <input type="text" id="credUsername" class="cred-input" placeholder="Username" autocomplete="off" spellcheck="false">
+      <input type="password" id="credPassword" class="cred-input" placeholder="Password" autocomplete="new-password">
       <div class="cred-actions">
-        <button id="clearCredBtn" class="btn btn-secondary btn-sm">Borrar</button>
-        <button id="saveCredBtn" class="btn btn-primary btn-sm">Guardar en sesión</button>
+        <button id="clearCredBtn" class="btn btn-secondary btn-sm">Clear</button>
+        <button id="saveCredBtn" class="btn btn-primary btn-sm">Save to session</button>
       </div>
-      <p class="cred-note">Solo en memoria · Se borra al cerrar Chrome</p>
+      <p class="cred-note">In memory only · Cleared when Chrome closes</p>
     </div>
   </div>
 
   <div class="footer">
-    <span class="footer-text">Auto-verificación cada 4 horas</span>
+    <span class="footer-text">Auto-check every 4 hours</span>
   </div>
 
   <script src="sites.js"></script>
